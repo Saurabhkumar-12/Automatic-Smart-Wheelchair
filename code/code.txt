@@ -1,0 +1,261 @@
+// =============================================
+// AUTOMATIC WHEELCHAIR - MAIN CONTROLLER
+// ESP32 #1 - Handles Motors, Sensors, GSM, LCD
+// =============================================
+
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// ---- LCD Setup (I2C) ----
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// ---- Motor Driver Pins (L298N x4) ----
+// Motor 1 (Front Left)
+#define M1_IN1 25
+#define M1_IN2 26
+// Motor 2 (Front Right)
+#define M2_IN1 27
+#define M2_IN2 14
+// Motor 3 (Rear Left)
+#define M3_IN1 12
+#define M3_IN2 13
+// Motor 4 (Rear Right)
+#define M4_IN1 32
+#define M4_IN2 33
+
+// ---- IR Sensor Pins ----
+#define IR_FRONT 34
+#define IR_BACK  35
+
+// ---- Joystick Pins ----
+#define JOY_X  36
+#define JOY_Y  39
+
+// ---- GSM Module (UART2) ----
+#define GSM_TX 17
+#define GSM_RX 16
+HardwareSerial GSM(2);
+
+// ---- Emergency Button ----
+#define EMERGENCY_BTN 4
+
+// ---- Buzzer & LED ----
+#define BUZZER 5
+#define LED_OBSTACLE 18
+#define LED_POWER    19
+
+// ---- WiFi ESP32 UART (UART1) ----
+#define WIFI_TX 22
+#define WIFI_RX 21
+HardwareSerial WifiSerial(1);
+
+// ---- Variables ----
+char wifiCmd = 'S';
+bool emergencyActive = false;
+String caregiverNumber = "+91XXXXXXXXXX"; // 🔁 Replace with caregiver number
+
+// =============================================
+// MOTOR CONTROL FUNCTIONS
+// =============================================
+void stopAll() {
+  digitalWrite(M1_IN1, LOW); digitalWrite(M1_IN2, LOW);
+  digitalWrite(M2_IN1, LOW); digitalWrite(M2_IN2, LOW);
+  digitalWrite(M3_IN1, LOW); digitalWrite(M3_IN2, LOW);
+  digitalWrite(M4_IN1, LOW); digitalWrite(M4_IN2, LOW);
+}
+
+void moveForward() {
+  digitalWrite(M1_IN1, HIGH); digitalWrite(M1_IN2, LOW);
+  digitalWrite(M2_IN1, HIGH); digitalWrite(M2_IN2, LOW);
+  digitalWrite(M3_IN1, HIGH); digitalWrite(M3_IN2, LOW);
+  digitalWrite(M4_IN1, HIGH); digitalWrite(M4_IN2, LOW);
+}
+
+void moveBackward() {
+  digitalWrite(M1_IN1, LOW); digitalWrite(M1_IN2, HIGH);
+  digitalWrite(M2_IN1, LOW); digitalWrite(M2_IN2, HIGH);
+  digitalWrite(M3_IN1, LOW); digitalWrite(M3_IN2, HIGH);
+  digitalWrite(M4_IN1, LOW); digitalWrite(M4_IN2, HIGH);
+}
+
+void turnLeft() {
+  digitalWrite(M1_IN1, LOW);  digitalWrite(M1_IN2, HIGH);
+  digitalWrite(M2_IN1, HIGH); digitalWrite(M2_IN2, LOW);
+  digitalWrite(M3_IN1, LOW);  digitalWrite(M3_IN2, HIGH);
+  digitalWrite(M4_IN1, HIGH); digitalWrite(M4_IN2, LOW);
+}
+
+void turnRight() {
+  digitalWrite(M1_IN1, HIGH); digitalWrite(M1_IN2, LOW);
+  digitalWrite(M2_IN1, LOW);  digitalWrite(M2_IN2, HIGH);
+  digitalWrite(M3_IN1, HIGH); digitalWrite(M3_IN2, LOW);
+  digitalWrite(M4_IN1, LOW);  digitalWrite(M4_IN2, HIGH);
+}
+
+// =============================================
+// GSM EMERGENCY ALERT
+// =============================================
+void sendEmergencyAlert() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("!! EMERGENCY !!");
+  lcd.setCursor(0, 1);
+  lcd.print("Sending Alert...");
+
+  tone(BUZZER, 1000);
+
+  GSM.println("AT");
+  delay(500);
+  GSM.println("AT+CMGF=1"); // SMS text mode
+  delay(500);
+  GSM.print("AT+CMGS=\"");
+  GSM.print(caregiverNumber);
+  GSM.println("\"");
+  delay(500);
+  GSM.println("EMERGENCY! Wheelchair user needs help. Please respond immediately.");
+  delay(500);
+  GSM.write(26); // Ctrl+Z to send
+  delay(3000);
+
+  noTone(BUZZER);
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Alert Sent!");
+  delay(2000);
+}
+
+// =============================================
+// JOYSTICK CONTROL
+// =============================================
+void handleJoystick() {
+  int x = analogRead(JOY_X); // 0–4095
+  int y = analogRead(JOY_Y);
+
+  lcd.setCursor(0, 0);
+  lcd.print("Mode: Joystick  ");
+
+  if (y > 3000) {
+    moveForward();
+    lcd.setCursor(0, 1);
+    lcd.print("Dir: FORWARD    ");
+  } else if (y < 1000) {
+    moveBackward();
+    lcd.setCursor(0, 1);
+    lcd.print("Dir: BACKWARD   ");
+  } else if (x < 1000) {
+    turnLeft();
+    lcd.setCursor(0, 1);
+    lcd.print("Dir: LEFT       ");
+  } else if (x > 3000) {
+    turnRight();
+    lcd.setCursor(0, 1);
+    lcd.print("Dir: RIGHT      ");
+  } else {
+    stopAll();
+    lcd.setCursor(0, 1);
+    lcd.print("Dir: STOPPED    ");
+  }
+}
+
+// =============================================
+// WIFI CONTROL
+// =============================================
+void handleWifiCommand(char cmd) {
+  lcd.setCursor(0, 0);
+  lcd.print("Mode: WiFi App  ");
+
+  switch (cmd) {
+    case 'F': moveForward();  lcd.setCursor(0,1); lcd.print("Dir: FORWARD    "); break;
+    case 'B': moveBackward(); lcd.setCursor(0,1); lcd.print("Dir: BACKWARD   "); break;
+    case 'L': turnLeft();     lcd.setCursor(0,1); lcd.print("Dir: LEFT       "); break;
+    case 'R': turnRight();    lcd.setCursor(0,1); lcd.print("Dir: RIGHT      "); break;
+    case 'S': stopAll();      lcd.setCursor(0,1); lcd.print("Dir: STOPPED    "); break;
+    case 'E': sendEmergencyAlert(); break;
+  }
+}
+
+// =============================================
+// SETUP
+// =============================================
+void setup() {
+  Serial.begin(115200);
+  GSM.begin(9600, SERIAL_8N1, GSM_RX, GSM_TX);
+  WifiSerial.begin(9600, SERIAL_8N1, WIFI_RX, WIFI_TX);
+
+  // Motor pins
+  int motorPins[] = {M1_IN1, M1_IN2, M2_IN1, M2_IN2,
+                     M3_IN1, M3_IN2, M4_IN1, M4_IN2};
+  for (int i = 0; i < 8; i++) {
+    pinMode(motorPins[i], OUTPUT);
+  }
+
+  // Other pins
+  pinMode(IR_FRONT, INPUT);
+  pinMode(IR_BACK, INPUT);
+  pinMode(EMERGENCY_BTN, INPUT_PULLUP);
+  pinMode(BUZZER, OUTPUT);
+  pinMode(LED_OBSTACLE, OUTPUT);
+  pinMode(LED_POWER, OUTPUT);
+
+  // LCD Init
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Auto Wheelchair ");
+  lcd.setCursor(0, 1);
+  lcd.print("  Initializing..");
+  delay(2000);
+
+  digitalWrite(LED_POWER, HIGH);
+  stopAll();
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("System Ready!   ");
+  delay(1000);
+}
+
+// =============================================
+// LOOP
+// =============================================
+void loop() {
+  // --- Read WiFi Command from ESP32 #2 ---
+  if (WifiSerial.available()) {
+    wifiCmd = WifiSerial.read();
+  }
+
+  // --- Emergency Button Check ---
+  if (digitalRead(EMERGENCY_BTN) == LOW) {
+    stopAll();
+    sendEmergencyAlert();
+    delay(1000);
+    return;
+  }
+
+  // --- IR Obstacle Detection ---
+  bool obstacleDetected = (digitalRead(IR_FRONT) == LOW);
+
+  if (obstacleDetected) {
+    stopAll();
+    digitalWrite(LED_OBSTACLE, HIGH);
+    tone(BUZZER, 800);
+    lcd.setCursor(0, 0);
+    lcd.print("!! OBSTACLE !!  ");
+    lcd.setCursor(0, 1);
+    lcd.print("Motors Stopped  ");
+    delay(500);
+    return;
+  } else {
+    digitalWrite(LED_OBSTACLE, LOW);
+    noTone(BUZZER);
+  }
+
+  // --- Control Mode: WiFi or Joystick ---
+  if (wifiCmd != 'S' && wifiCmd != '\0') {
+    handleWifiCommand(wifiCmd);
+  } else {
+    handleJoystick();
+  }
+
+  delay(100);
+}
