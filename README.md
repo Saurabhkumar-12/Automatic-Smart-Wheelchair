@@ -1,57 +1,55 @@
-# ♿ Automatic Smart Wheelchair
+# ♿ Automatic and Health Detecting Wheelchair
 
-The **Automatic Smart Wheelchair** is an IoT-enabled assistive mobility system designed to enhance the independence, safety, and quality of life of elderly individuals, patients, and people with physical disabilities. The wheelchair combines embedded systems, health monitoring, obstacle detection, and intelligent control mechanisms to provide a safer and more convenient mobility experience.
+The **Automatic and Health Detecting Wheelchair** is a low-cost, IoT-enabled assistive mobility prototype designed to provide flexible drive control alongside real-time vital-sign monitoring for elderly individuals, patients, and people with physical disabilities. Built around a **split-controller architecture** using an **Arduino Nano** and a **NodeMCU ESP8266**, the system separates motor control from wireless networking and health sensing so that network or sensor delays never interfere with manual driving.
 
-The system is powered by **ESP32 microcontrollers** and integrates multiple sensors, including **IR sensors** for obstacle detection and the **MAX30100 sensor** for real-time health monitoring. Users can control the wheelchair using either a **joystick** or a **Wi-Fi-based mobile application**, making it suitable for both manual and remote operation.
+Users and caregivers can operate the wheelchair through **three independent control interfaces**—hard-wired **push buttons** (highest priority), a **Bluetooth smartphone app (HC-05)**, and a self-hosted **Wi-Fi web dashboard**—while continuously monitoring **heart rate**, **blood-oxygen saturation (SpO₂)** via a **MAX30102** sensor, and **body temperature** via an **LM35** sensor without requiring a router or internet connection.
 
 ---
 
 # ✨ Features
 
-- 🦽 Dual Control System (Joystick + Wi-Fi Mobile App)
-- 🚧 Real-Time Obstacle Detection using IR Sensors
-- ❤️ Heart Rate & SpO₂ Monitoring (MAX30100)
-- 🌡️ Temperature & Humidity Monitoring
-- 💡 Automatic Ambient Light Detection
-- 🔔 Buzzer & LED Safety Alerts
-- 📱 ESP32-Based Wireless Control
-- ⚡ Low Power Embedded System
-- 🛡️ Safe Navigation with Automatic Motor Stop
-- 🔋 Battery Powered Mobility Solution
+- 🦽 **Triple Control System:** Hard-wired Push Buttons (Highest Priority) + HC-05 Bluetooth App + Self-Hosted Wi-Fi Web Dashboard
+- ❤️ **Heart Rate & SpO₂ Monitoring:** Optical pulse oximetry using the **MAX30102** sensor with clinical-style 5-sample rolling averaging
+- 🌡️ **Body Temperature Monitoring:** Precision analog sensing using the **LM35** sensor
+- 🌐 **Offline Self-Hosted Web Dashboard:** NodeMCU operates in Soft-AP mode (`Wheelchair_Health` at `192.168.4.1`)—no external router or internet required
+- 🛡️ **Layered Failsafe & Priority Logic:** Absolute physical button override, latched remote command clearing, 300 ms dashboard heartbeat, and a 700 ms lost-link auto-stop failsafe
+- ⚡ **Split-Controller Isolation:** Dedicated **Arduino Nano** for deterministic motor control and **NodeMCU ESP8266** for health sensing and HTTP server hosting
+- 🚦 **Color-Coded Vitals Status Badges:** Live dashboard indicators (*Normal*, *Check/Low*, *Critical*, *No Data*) updated every 2 seconds
+- 🔋 **Dual-Supply Power Architecture:** Isolated motor battery pack and regulated 5V/3.3V logic power with a shared common ground
 
 ---
 
 # 🏗️ System Architecture
 
 ```text
-                    ┌─────────────────────────┐
-                    │      Mobile App         │
-                    │    (Wi-Fi Control)      │
-                    └───────────┬─────────────┘
-                                │
-                           Wi-Fi Communication
-                                │
-                                ▼
-                 ┌─────────────────────────────┐
-                 │      ESP32 Controller       │
-                 └───────────┬─────────────────┘
-                             │
-      ┌──────────────┬────────┼──────────┬───────────────┐
-      │              │        │          │               │
-      ▼              ▼        ▼          ▼               ▼
-  IR Sensors    MAX30100    DHT Sensor   LDR        Joystick
-Obstacle Detect  Health     Temp/Humidity Light      Manual Input
-      │              │          │          │               │
-      └──────────────┴──────────┴──────────┴───────────────┘
-                             │
-                             ▼
-                    Motor Driver (L298N)
-                             │
-                             ▼
-                      DC Geared Motors
-                             │
-                             ▼
-                  Smart Wheelchair Movement
+          DRIVE SUBSYSTEM                                 HEALTH + WEB SUBSYSTEM
+
+  ┌───────────────┐   ┌───────────────┐             ┌───────────────┐   ┌───────────────┐
+  │   Phone App   │   │ Push Buttons  │             │   MAX30102    │   │     LM35      │
+  │  (Bluetooth)  │   │  (A1 – A4)    │             │ SpO2 + HR     │   │  Body Temp    │
+  └───────┬───────┘   └───────┬───────┘             └───────┬───────┘   └───────┬───────┘
+          │ Bluetooth         │ Hard-wired                  │ I2C (D1/D2)       │ Analog (A0)
+          ▼                   │                             ▼                   ▼
+  ┌───────────────┐           │                     ┌───────────────────────────────────┐
+  │     HC-05     │           │                     │         NodeMCU ESP8266           │
+  │   Bluetooth   │           │                     │ Wi-Fi Access Point + Web Server   │
+  └───────┬───────┘           │                     └─────────┬─────────────────┬───────┘
+          │ D2 / D3           │                               │                 │
+          ▼                   ▼                               │                 │ Wi-Fi / HTTP
+  ┌───────────────────────────────────┐     TX > D0 (RX)      │                 ▼
+  │           Arduino Nano            │◄──────────────────────┘         ┌───────────────┐
+  │    Drive Controller (ATmega328P)  │       9600 baud                 │ Phone / PC    │
+  └─────────────────┬─────────────────┘        (1-way)                  │ Web Dashboard │
+                    │ D5 – D10 (PWM & Dir)                              └───────────────┘
+                    ▼
+  ┌───────────────────────────────────┐
+  │        L298N Motor Driver         │
+  └─────────────────┬─────────────────┘
+                    │
+                    ▼
+  ┌───────────────────────────────────┐
+  │       DC Geared Motors (x2)       │
+  └───────────────────────────────────┘
 ```
 
 ---
@@ -59,196 +57,162 @@ Obstacle Detect  Health     Temp/Humidity Light      Manual Input
 # 🔄 System Workflow
 
 ```text
-Power ON
+Power ON (Motors & Latched State Initialized to STOP)
     │
-    ▼
-ESP32 Initialization
-    │
-    ▼
-Read Sensors
-    │
-    ├── IR Sensors
-    ├── MAX30100
-    ├── DHT Sensor
-    ├── LDR
-    └── Joystick / Mobile App
-    │
-    ▼
-Process Sensor Data
-    │
-    ▼
-Obstacle Detected?
-    │
- ┌──Yes───────────────┐
- │                    │
- ▼                    ▼
-Stop Motors      Continue Movement
- │                    │
- ▼                    ▼
-Safety Alert     Navigate Normally
-      │
-      ▼
-Display Health Data
+    ├──────────────────────────────────────────┐
+    ▼                                          ▼
+[Arduino Nano: Drive Loop]              [NodeMCU ESP8266: Health & Web Loop]
+    │                                          │
+    ▼                                          ▼
+Read Physical Push Buttons (A1–A4)      Sample MAX30102 (100 samples @ 25 Hz) & LM35
+    │                                          │
+    ├── Button Held? ──► YES                   ├── Filter Plausibility (HR 30–220, SpO2 70–100%)
+    │                     │                    ├── Update 5-Sample Rolling Average
+    │                     ▼                    └── Serve Web Dashboard & /data JSON (192.168.4.1)
+    │            Drive per Button                      │
+    │            Clear Latched Command                 │ Dashboard Hold (300 ms heartbeat)
+    │            Ignore Remote Inputs                  ▼
+    │                                          Forward Command ('F','B','L','R','S') via UART
+    └── NO ──► Read HC-05 & NodeMCU UART ◄─────────────┘
+                    │
+                    ▼
+          NodeMCU/USB Silent > 700 ms?
+            ├── YES ──► Failsafe STOP
+            └── NO  ──► Drive Motors per Latched Command (PWM 120/255)
 ```
 
 ---
 
 # 🧩 Hardware Components
 
-| Component | Purpose |
-|-----------|----------|
-| ESP32 | Main Microcontroller |
-| IR Sensors | Obstacle Detection |
-| MAX30100 | Heart Rate & SpO₂ Monitoring |
-| DHT11/DHT22 | Temperature & Humidity |
-| LDR | Ambient Light Detection |
-| L298N Motor Driver | Motor Control |
-| DC Geared Motors | Wheel Movement |
-| Joystick Module | Manual Navigation |
-| Buzzer | Audio Warning |
-| LEDs | Visual Status Indicators |
-| Rechargeable Battery | Power Supply |
+| Component | Qty | Purpose | Key Specifications |
+| :--- | :---: | :--- | :--- |
+| **Arduino Nano** | 1 | Dedicated Drive Controller | ATmega328P, 5V logic, 16 MHz, Hardware UART + `SoftwareSerial` |
+| **NodeMCU ESP8266 (ESP-12E)** | 1 | Health Sensing, Wi-Fi AP & Web Server | 3.3V logic, 80 MHz, 802.11 b/g/n, 10-bit ADC (`A0`) |
+| **HC-05 Bluetooth Module** | 1 | Wireless Smartphone App Control | Bluetooth 2.0 + EDR, SPP, 9600 baud |
+| **MAX30102 Breakout** | 1 | Heart Rate & SpO₂ Sensing | Red (~660 nm) + IR (~880 nm) LEDs, 18-bit ADC, I2C (`0x57`) |
+| **LM35 Temperature Sensor** | 1 | Body Temperature Sensing | Analog output (10 mV/°C), 4–30V supply |
+| **L298N Motor Driver** | 1 | Dual H-Bridge Motor Control | Up to 2A/channel, PWM speed control (`ENA`/`ENB`) |
+| **DC Geared Motors** | 2 | Left & Right Wheel Drive | Geared traction motors matched to chassis & battery |
+| **Momentary Push Buttons** | 4 | Hard-Wired Manual Override | Wired to `A1`–`A4` (`INPUT_PULLUP`, active `LOW`) |
+| **Resistors (1 kΩ & 2 kΩ)** | 1 each | Logic Level Voltage Divider | Steps down Nano 5V TX to ~3.3V for HC-05 RXD |
+| **Dual Battery / Power Supply** | 1 + 1 | Isolated Motor & Logic Power | Dedicated motor battery pack + 5V USB/regulated logic supply |
 
 ---
 
 # 🛠️ Technology Stack
 
-## Embedded Systems
+## Embedded Firmware & Microcontrollers
+- **Controllers:** Arduino Nano (ATmega328P) & NodeMCU ESP8266 (ESP-12E)
+- **IDE & Language:** Arduino IDE, Embedded C/C++
+- **Libraries:** `SoftwareSerial`, `ESP8266WiFi`, `ESP8266WebServer`, `Wire`, `SparkFun MAX3010x` (`MAX30105.h`, `spo2_algorithm.h`)
 
-- ESP32
-- Arduino IDE
-- Embedded C/C++
+## Sensors & Actuators
+- **Biometric Sensors:** MAX30102 Pulse Oximeter & Heart-Rate Sensor, LM35 Precision Analog Temperature Sensor
+- **Motor Drive:** L298N Dual H-Bridge Driver, Dual DC Geared Motors (fixed safe PWM duty `120/255`)
 
-## Sensors
-
-- IR Sensor
-- MAX30100
-- DHT11 / DHT22
-- LDR
-
-## Communication
-
-- Wi-Fi
-- Mobile App Control
-
-## Hardware
-
-- L298N Motor Driver
-- DC Geared Motors
-- Joystick
-- Battery Pack
+## Communication & Interface
+- **Wi-Fi Access Point & Web UI:** Self-hosted responsive HTML/CSS/JS dashboard (`SSID: Wheelchair_Health`, IP: `192.168.4.1`) with REST endpoints (`/`, `/data`, `/cmd?dir=X`)
+- **Bluetooth & Inter-MCU Link:** HC-05 Serial Port Profile (9600 baud) and one-way 9600-baud UART link (NodeMCU `TX` → Nano `D0/RX`)
 
 ---
 
 # 📂 Project Structure
 
 ```text
-Automatic-Smart-Wheelchair
+Automatic-Health-Detecting-Wheelchair/
 │
-├── Arduino_Code/
-├── Circuit_Diagram/
+├── Firmware/
+│   ├── Drive_Controller_Nano/        # Arduino Nano motor, button priority & failsafe code
+│   └── Health_Web_NodeMCU/           # ESP8266 MAX30102/LM35 sampling & self-hosted web server
 ├── Hardware/
-├── Mobile_App/
+│   ├── Pinout_and_Wiring.md          # Nano, NodeMCU, L298N, HC-05, MAX30102 & LM35 pin mappings
+│   └── BOM.csv                       # Complete Bill of Materials
 ├── Documentation/
+│   └── Project_Final_Report.pdf      # Complete Technical Documentation
 ├── Images/
-├── Components_List/
-├── README.md
-└── LICENSE
+│   ├── Prototype_Assembly.jpg        # Assembled wheelchair with armrest controls & sensor pod
+│   └── Web_Dashboard_UI.png          # Mobile dashboard interface screenshot
+└── README.md
 ```
 
 ---
 
 # 🔐 Safety Features
 
-- Automatic Obstacle Detection
-- Instant Motor Shutdown
-- Health Monitoring
-- Emergency Alert System
-- Stable Motor Control
-- Low Power Consumption
-- Real-Time Sensor Monitoring
+- **Absolute Physical Button Priority:** Holding any armrest push button (`A1`–`A4`) immediately overrides and rejects all Bluetooth and Wi-Fi commands (precedence: *Forward > Backward > Left > Right*).
+- **Latched Command Clearing:** Pressing any physical button clears the active remote command to `Stop`, preventing unexpected movement when the button is released.
+- **Press-and-Hold Web Control + 700 ms Failsafe:** The dashboard sends a direction heartbeat every **300 ms** while held and `Stop` on release; if Wi-Fi drops or the browser closes, the Nano automatically halts the motors within **700 ms**.
+- **Safe Power-Up State & Speed Limiting:** Motor pins and command states initialize to `Stop` on boot, with PWM capped at `120/255` (~47% duty) for smooth, controllable indoor/prototype speeds.
+- **Hardware Isolation & Command Validation:** One-way serial wiring protects the 3.3V NodeMCU from 5V Nano signals, and only valid single-character commands (`F`, `B`, `L`, `R`, `S`) are executed.
+
+> **Note:** This system is a proof-of-concept prototype and is not a certified medical or clinical mobility device.
 
 ---
 
 # 📡 Functional Modules
 
-```text
-User Input
-     │
-     ▼
-Joystick / Mobile App
-     │
-     ▼
-ESP32 Controller
-     │
-     ├───────────────┐
-     │               │
-     ▼               ▼
-Sensor Data      Motor Control
-     │               │
-     └──────┬────────┘
-            ▼
-Wheelchair Navigation
-```
+| Control Source / Endpoint | Interface | Behavior & Protocol | Failsafe / Refresh |
+| :--- | :--- | :--- | :--- |
+| **Push Buttons (`A1`–`A4`)** | Hard-wired (`INPUT_PULLUP`) | Highest priority; momentary movement only while held | Physical (instant stop on release) |
+| **Web Dashboard (`/cmd?dir=X`)** | Wi-Fi Soft-AP (`192.168.4.1`) | Press-and-hold directional pad (`F`, `B`, `L`, `R`, `S`) | **300 ms** heartbeat / **700 ms** auto-stop |
+| **Bluetooth App (`HC-05`)** | SoftwareSerial (`D2`/`D3`, 9600 baud) | Single-character commands (`F`, `B`, `L`, `R`, `S`); latched until changed | Manual `S` or physical button override |
+| **Health Telemetry (`/data`)** | HTTP `GET` (JSON) | Returns `hr`, `spo2`, `temp`, and `finger` presence flag | Polled every **2 s**; 5-sample rolling average |
 
 ---
 
 # 🚀 Future Enhancements
 
-- GPS Navigation
-- Voice Command Control
-- AI-Based Path Planning
-- Face Recognition
-- Emergency SMS Notification
-- Fall Detection
-- Cloud-Based Health Monitoring
-- Autonomous Navigation
-- Camera Integration
-- Mobile Application Dashboard
+- **Obstacle & Drop-Off Detection:** Integrate ultrasonic or Time-of-Flight (ToF) sensors to automatically halt the chair near obstacles or stairs.
+- **Authentication & Bluetooth Heartbeat:** Add per-unit WPA2 credentials, dashboard PIN protection, and continuous Bluetooth keep-alive packets.
+- **Higher-Resolution Temperature & Biometrics:** Upgrade to an external 16-bit ADC (e.g., ADS1115) or digital clinical-grade temperature sensor.
+- **Emergency Caregiver Alerts & Cloud Logging:** Trigger automated SMS/push alerts for critical vitals and log historical health trends to an SD card or cloud dashboard.
+- **Proportional Joystick, Fall Detection & GPS:** Add an analog proportional joystick, accelerometer-based tilt/fall detection, GPS tracking, and battery voltage telemetry.
 
 ---
 
 # 📸 Project Images
 
 Include images of:
-
-- Prototype
-- Circuit Diagram
-- ESP32 Wiring
-- Sensor Connections
-- Final Hardware Model
-- Mobile App Interface
+- **Complete Prototype:** Dual-armrest wheelchair assembly with ergonomic button and sensor placement
+- **Armrest Control Panel:** 4-way tactile push-button array (`Forward`, `Backward`, `Left`, `Right`)
+- **Armrest Health Pod:** Integrated MAX30102 optical sensor and LM35 temperature sensor module
+- **Mobile Web Dashboard:** Dark-themed live vitals card view (`Heart Rate`, `SpO2`, `Body Temp`) and touch drive pad
 
 ---
 
 # ⚙️ Getting Started
 
 ```bash
-# Clone Repository
+# 1. Clone the repository
 git clone <repository-url>
 
-# Open Arduino IDE
-# Install ESP32 Board Package
+# 2. Configure Arduino IDE
+# - Install "ESP8266 Boards" via Boards Manager (select: NodeMCU 1.0 (ESP-12E Module))
+# - Install "SparkFun MAX3010x Pulse and Proximity Sensor Library" via Library Manager
 
-# Install Required Libraries
-MAX30100
-DHT Sensor
-WiFi
-ESP32
+# 3. Upload Firmware to Arduino Nano
+# - Disconnect NodeMCU TX from Nano D0 and HC-05 wires before uploading
+# - Select Board: "Arduino Nano" (use "ATmega328P (Old Bootloader)" if required) and upload
 
-# Upload Code to ESP32
+# 4. Upload Firmware to NodeMCU ESP8266
+# - Select Board: "NodeMCU 1.0 (ESP-12E Module)" and upload
+# - Reconnect NodeMCU TX -> Nano D0 and verify common GND across all modules
+
+# 5. Connect & Operate
+# - Power on the system (verify wheels are lifted for initial testing)
+# - Connect phone/PC to Wi-Fi SSID: "Wheelchair_Health"
+# - Open browser and navigate to: [http://192.168.4.1](http://192.168.4.1)
 ```
 
 ---
 
 # 🎯 Applications
 
-- Elderly Care
-- Hospitals
-- Rehabilitation Centers
-- Home Healthcare
-- Disability Assistance
-- Smart Healthcare Systems
+- **Elderly & Disability Mobility:** Independent indoor mobility with effortless multi-mode control for users with varying motor dexterity.
+- **Hospitals & Rehabilitation Centers:** Patient transport combined with continuous bedside/chairside vital-sign visibility.
+- **Home Healthcare & Caregiver Assistance:** Local Wi-Fi monitoring and remote caregiver maneuvering without internet dependency.
+- **Embedded Systems & Telehealth Research:** Modular educational testbed for sensor fusion, safety-critical motor control, and offline IoT dashboards.
 
 ---
 
@@ -261,12 +225,10 @@ ESP32
 ### Skills
 
 - Embedded Systems
-- ESP32
-- Arduino
-- IoT
+- Arduino & ESP8266 / ESP32
+- IoT & Wireless Communication
 - C/C++
-- Electronics
-- Sensor Integration
+- Electronics & Sensor Integration
 - React.js
 - Node.js
 - MongoDB
@@ -276,7 +238,4 @@ ESP32
 
 # ⭐ Support
 
-If you found this project useful, please consider giving it a **⭐ Star** on GitHub.
-
----
-
+If you found this project useful, please consider giving it a **⭐ Star** on GitHub!
